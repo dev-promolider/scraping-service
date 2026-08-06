@@ -1,22 +1,20 @@
 """
-CLI de ejemplo para el endpoint POST /recursos: dado un tema, arma la URL
-de busqueda de Hotmart y extrae nombre y precio (convertido a USD) de los
+CLI de ejemplo para el endpoint POST /recursos: dado un topic, busca en
+Hotmart y extrae titulo, descripcion y precio (convertido a USD) de los
 cursos encontrados.
 
-Reutiliza scrapegraph_api.scraping.fetch_recursos_marketplace, la misma
-funcion generica que usa la API (funciona con cualquier marketplace, no solo
-Hotmart), para no duplicar la logica de scraping/conversion.
+Reutiliza scrapegraph_api.scraping.fetch_course_titles, la misma funcion
+generica que usa la API, para no duplicar la logica de scraping/conversion.
 """
 
 import argparse
 import json
 import os
 import sys
-from urllib.parse import quote
 
 from dotenv import load_dotenv
 
-from scrapegraph_api.scraping import fetch_recursos_marketplace
+from scrapegraph_api.scraping import fetch_course_titles
 
 
 def main() -> None:
@@ -26,17 +24,13 @@ def main() -> None:
         sys.stdout.reconfigure(encoding="utf-8")
 
     parser = argparse.ArgumentParser(
-        description="Extrae recursos (cursos, productos) de un marketplace"
+        description="Extrae cursos (titulo, descripcion, precio) de Hotmart por topic"
     )
     parser.add_argument(
-        "tema",
+        "topic",
         nargs="?",
         default="Python",
         help="Tema a buscar en Hotmart, ej: 'Excel', 'Ingles' (default: Python)",
-    )
-    parser.add_argument(
-        "--url",
-        help="URL completa de listado/busqueda de cualquier marketplace (ignora 'tema' si se da)",
     )
     args = parser.parse_args()
 
@@ -44,12 +38,10 @@ def main() -> None:
     if not api_key:
         sys.exit("OPENAI_API_KEY no esta configurada en el .env")
 
-    url = args.url or f"https://hotmart.com/es/marketplace/productos?q={quote(args.tema)}"
+    course_titles = fetch_course_titles(topic=args.topic, api_key=api_key)
 
-    recursos = fetch_recursos_marketplace(url, api_key)
-
-    print(f"\nTotal de recursos extraidos: {len(recursos)}\n")
-    print(json.dumps(recursos, indent=4, ensure_ascii=False))
+    print(f"\nTotal de cursos extraidos: {len(course_titles)}\n")
+    print(json.dumps(course_titles, indent=4, ensure_ascii=False))
 
 
 if __name__ == "__main__":

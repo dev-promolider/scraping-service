@@ -2,6 +2,22 @@
 
 API en FastAPI que expone [scrapegraphai](https://github.com/ScrapeGraphAI/Scrapegraph-ai) para extraer informacion estructurada de paginas web usando un LLM (OpenAI).
 
+## Indice
+
+- [Requisitos](#requisitos)
+- [Instalacion](#instalacion-paso-a-paso)
+- [Configuracion (.env)](#configuracion-env)
+- [Levantar el servidor](#levantar-el-servidor)
+- [Como probar la API](#como-probar-la-api)
+  - [Swagger UI](#swagger-ui)
+  - [curl](#curl)
+  - [Postman](#postman)
+- [Endpoints](#endpoints)
+- [CLI de ejemplo](#cli-de-ejemplo)
+- [Estructura del proyecto](#estructura-del-proyecto)
+- [Detalle tecnico: SPAs](#detalle-tecnico-contenido-cargado-por-js-spas-y-sus-limites)
+- [Limitaciones conocidas](#limitaciones-conocidas)
+
 ## Requisitos
 
 - Python >= 3.14 (el repo fija la version exacta en `.python-version`; `uv` la instala solo si no la tenes)
@@ -24,15 +40,19 @@ API en FastAPI que expone [scrapegraphai](https://github.com/ScrapeGraphAI/Scrap
    uv run playwright install chromium
    ```
 
-4. **Crear el archivo `.env`** en la raiz del proyecto (no se commitea, ya esta listado en `.gitignore`):
+## Configuracion (.env)
 
-   ```
-   OPENAI_API_KEY=tu-api-key-de-openai
-   OPENAI_MODEL=openai/gpt-4o-mini
-   ```
+Crea un archivo `.env` en la raiz del proyecto (no se commitea, ya esta listado en `.gitignore`):
 
-   - `OPENAI_API_KEY` es obligatoria; sin ella la API responde `500` en cualquier endpoint que scrapee.
-   - `OPENAI_MODEL` es opcional (default `openai/gpt-4o-mini`, el unico verificado como estable con `schema` forzado -- ver seccion tecnica abajo).
+```
+OPENAI_API_KEY=tu-api-key-de-openai
+OPENAI_MODEL=openai/gpt-4o-mini
+```
+
+| variable         | obligatoria | descripcion                                                                          |
+| ---------------- | ----------- | --------------------------------------------------------------------------------------- |
+| `OPENAI_API_KEY` | si          | Sin ella la API responde `500` en cualquier request que scrapee.                       |
+| `OPENAI_MODEL`   | no          | Default `openai/gpt-4o-mini`, el unico verificado como estable con `schema` forzado -- ver [detalle tecnico](#detalle-tecnico-contenido-cargado-por-js-spas-y-sus-limites). |
 
 ## Levantar el servidor
 
@@ -42,12 +62,20 @@ uv run uvicorn scrapegraph_api.api:app --reload
 
 `--reload` reinicia el servidor automaticamente al guardar cambios en el codigo; podes omitirlo en un uso mas "productivo".
 
+**Windows**: si da `error: Failed to spawn: 'uvicorn' ... Una directiva de Control de aplicaciones bloqueo este archivo`, es Smart App Control/Application Control de Windows bloqueando el `.exe` de `uvicorn` dentro de `.venv`. Solucion: correrlo como modulo de Python en vez de invocar el ejecutable directamente:
+
+```bash
+uv run python -m uvicorn scrapegraph_api.api:app --reload
+```
+
+Una vez levantado:
+
 - API: http://127.0.0.1:8000
 - Documentacion interactiva (Swagger): http://127.0.0.1:8000/docs
 
-## Probar que quedo bien levantado
+## Como probar la API
 
-Con el servidor corriendo, confirma el healthcheck:
+Con el servidor corriendo, confirma primero el healthcheck:
 
 ```bash
 curl http://127.0.0.1:8000/
@@ -55,27 +83,45 @@ curl http://127.0.0.1:8000/
 
 Deberia devolver `{"message":"Scrapegraph API is running"}`. Si da error de conexion, el servidor no esta corriendo o esta en otro puerto/host.
 
-Para probar los endpoints que scrapean de verdad (`/scrape` y `/recursos`, ver detalle mas abajo) tenes dos opciones:
+Para probar `/recursos` (el endpoint que scrapea de verdad, ver [detalle](#post-recursos)) tenes tres opciones. Las tres tardan varios segundos en responder (el servidor arranca un navegador Playwright y llama al LLM), asi que no es un timeout si tarda unos segundos.
 
-- **Swagger UI** (mas comodo para probar a mano): abrir http://127.0.0.1:8000/docs, desplegar el endpoint, click en "Try it out", completar el body y "Execute".
-- **curl** desde la terminal, como en los ejemplos de cada endpoint abajo.
+### Swagger UI
 
-Ambos endpoints tardan varios segundos en responder (arrancan un navegador Playwright y llaman al LLM), asi que no es un timeout si tarda unos segundos.
+La mas comoda para probar a mano, sin herramientas externas:
 
-## Estructura del proyecto
+1. Abrir http://127.0.0.1:8000/docs
+2. Desplegar `POST /recursos`
+3. Click en **"Try it out"**
+4. Completar el body (ver ejemplo en [Endpoints](#post-recursos))
+5. Click en **"Execute"**
 
+### curl
+
+```bash
+curl -X POST http://127.0.0.1:8000/recursos \
+  -H "Content-Type: application/json" \
+  -d '{
+    "topic": "python para principiantes",
+    "max_items": 2
+  }'
 ```
-src/scrapegraph_api/
-├── __init__.py    # marcador del paquete
-├── api.py         # app FastAPI y endpoints (capa fina, delega en los modulos de abajo)
-├── models.py       # schemas Pydantic (requests/responses)
-├── config.py        # lectura de env vars y config del graph de scrapegraphai
-├── currency.py      # tasas de cambio y conversion de precios a USD
-├── scraping.py       # fetch_recursos_marketplace: la logica de scraping en si
-└── cli.py            # CLI de ejemplo (entry point `extraer-cursos`)
-```
 
-`api.py` no tiene logica propia de scraping ni de conversion de moneda: solo arma la `FastAPI app`, valida el request con los modelos de `models.py` y llama a las funciones de `config.py`/`scraping.py`. Esto permite reusar `fetch_recursos_marketplace` tanto desde la API como desde la CLI sin duplicar codigo.
+### Postman
+
+1. **Method**: `POST`
+2. **URL**: `http://127.0.0.1:8000/recursos`
+3. **Body** → pestaña `Body` → `raw` → tipo `JSON` (Postman agrega el header `Content-Type: application/json` solo):
+
+   ```json
+   {
+     "topic": "python para principiantes",
+     "max_items": 5
+   }
+   ```
+
+4. Click **Send**.
+
+En cualquiera de los tres casos, la respuesta tiene siempre la misma forma fija -- ver [Endpoints](#post-recursos) para el detalle completo y los codigos de error.
 
 ## Endpoints
 
@@ -87,101 +133,84 @@ Healthcheck.
 { "message": "Scrapegraph API is running" }
 ```
 
-### `POST /scrape`
+### `POST /recursos`
 
-Scraping libre de una unica URL segun un prompt arbitrario (el formato de salida lo decide el LLM, sin schema forzado).
+Unico endpoint de scraping del proyecto. Dado un `topic`, busca en **Hotmart** (marketplace fijo, no configurable via request) y devuelve una salida con forma fija -- pensada para ser consumida por otro backend sin ambiguedad -- con **titulo**, **descripcion breve** y **precio** (convertido a USD) de cada curso encontrado.
 
 **Request**
 
-| campo    | tipo   | descripcion                                |
-| -------- | ------ | ------------------------------------------- |
-| `url`    | string | URL de la pagina a scrapear                |
-| `prompt` | string | Que informacion extraer y en que formato   |
-
-```bash
-curl -X POST http://127.0.0.1:8000/scrape \
-  -H "Content-Type: application/json" \
-  -d '{
-    "url": "https://example.com",
-    "prompt": "Dame el titulo principal y un resumen breve de la pagina"
-  }'
-```
-
-**Response**
+| campo       | tipo   | descripcion                                                     |
+| ----------- | ------ | ---------------------------------------------------------------- |
+| `topic`     | string | Tema a buscar (ej. `"python para principiantes"`)               |
+| `max_items` | int    | Maximo de cursos a extraer de la pagina de resultados (1-100, default 40) |
 
 ```json
 {
-  "result": {
-    "content": { "titulo": "Example Domain", "resumen": "..." }
-  }
+  "topic": "python para principiantes",
+  "max_items": 2
 }
 ```
 
-Errores: `422` si `url`/`prompt` son invalidos, `500` si falta `OPENAI_API_KEY`, `502` si el scraping falla (sitio caido, sin red, timeout, etc.).
-
-### `POST /recursos`
-
-Endpoint principal del proyecto: dado el listado/busqueda de un marketplace (cursos, productos, servicios), devuelve solo **nombre** y **precio** (convertido a USD) de cada recurso encontrado. Pensado para funcionar con cualquier sitio de este tipo -- probado con Hotmart y Udemy -- no esta acoplado a un sitio en particular.
-
-**Request**
-
-| campo       | tipo   | descripcion                                                                          |
-| ----------- | ------ | -------------------------------------------------------------------------------------- |
-| `url`       | string | URL de una pagina de listado/busqueda del marketplace                                 |
-| `max_items` | int    | Maximo de recursos a extraer de la pagina (1-100, default 40)                         |
-
-```bash
-curl -X POST http://127.0.0.1:8000/recursos \
-  -H "Content-Type: application/json" \
-  -d '{
-    "url": "https://hotmart.com/es/marketplace/productos?q=python",
-    "max_items": 8
-  }'
-```
-
-**Response** (verificado en pruebas reales contra Hotmart)
+**Response** (forma fija, siempre la misma estructura sin importar el topic o la cantidad de resultados)
 
 ```json
 {
-  "url": "https://hotmart.com/es/marketplace/productos?q=python",
-  "recursos": [
-    { "nombre": "Jornada Python", "precio": "$143.45" },
-    { "nombre": "Python para Data Science e Analytics", "precio": "$40.94" },
-    { "nombre": "Python Bot", "precio": "$60.97" },
-    { "nombre": "Curso de Python", "precio": "$20.32" }
+  "topic": "python para principiantes",
+  "courseTitles": [
+    {
+      "title": "Python desde cero: fundamentos para principiantes",
+      "description": "Curso introductorio que cubre sintaxis basica, variables y estructuras de control.",
+      "price": "$40.94"
+    },
+    {
+      "title": "Programacion en Python: de principiante a intermedio",
+      "description": "Aprende los fundamentos de Python y avanza hacia conceptos de programacion orientada a objetos.",
+      "price": "$60.97"
+    }
   ]
 }
 ```
 
-Errores: `422` si `url` es invalida, `500` si falta `OPENAI_API_KEY`, `502` si el scraping falla.
+Errores: `422` si `topic` es invalido, `500` si falta `OPENAI_API_KEY`, `502` si el scraping falla.
 
-**Como funciona internamente** (`fetch_recursos_marketplace` en `src/scrapegraph_api/scraping.py`):
+**Como funciona internamente** (`fetch_course_titles` en `src/scrapegraph_api/scraping.py`):
 
-1. Llama a `SmartScraperGraph` con `schema=ListaRecursosDetectados` (Pydantic, definido en `models.py`) para forzar salida estructurada del LLM -- evita el bug conocido del parser JSON de texto libre en `generate_answer_node.py` de `scrapegraphai`.
-2. Usa `gpt-4o-mini` por la misma razon (modelo verificado como estable con schema).
-3. Convierte cada precio a USD con tasas de cambio fijas en `TASAS_A_USD` (`currency.py`; no se le pide al LLM que "adivine" el tipo de cambio). Si la moneda detectada no esta en esa tabla, `precio` se deja en su valor y moneda original sin convertir (ej. `"45.0 EUR"`).
+1. Arma la URL de busqueda en Hotmart a partir de `topic` (`build_search_url`).
+2. Llama a `SmartScraperGraph` con `schema=ListaCursosDetectados` (Pydantic, definido en `models.py`) para forzar salida estructurada del LLM -- evita el bug conocido del parser JSON de texto libre en `generate_answer_node.py` de `scrapegraphai`, y garantiza que la respuesta siempre tenga la misma forma (nunca un dict libre segun lo que "decida" el LLM).
+3. Usa `gpt-4o-mini` por la misma razon (modelo verificado como estable con schema).
+4. Convierte cada precio a USD con tasas de cambio fijas en `TASAS_A_USD` (`currency.py`; no se le pide al LLM que "adivine" el tipo de cambio). Si la moneda detectada no esta en esa tabla, `price` se deja en su valor y moneda original sin convertir (ej. `"45.0 EUR"`).
 
-**CLI de ejemplo**: `uv run extraer-cursos [tema]` arma la URL de busqueda de Hotmart para `tema` (default `"Python"`) y reutiliza `fetch_recursos_marketplace` (`src/scrapegraph_api/cli.py`), la misma funcion que usa la API. Tambien acepta `--url` para apuntar a cualquier otro marketplace directamente, ej. `uv run extraer-cursos --url "https://hotmart.com/es/marketplace/productos?q=excel"`.
+## CLI de ejemplo
+
+`uv run extraer-cursos [topic]` (default `"Python"`) reutiliza `fetch_course_titles` (`src/scrapegraph_api/cli.py`), la misma funcion que usa la API, e imprime el resultado por consola sin levantar el servidor.
+
+```bash
+uv run extraer-cursos "excel"
+```
+
+## Estructura del proyecto
+
+```
+src/scrapegraph_api/
+├── __init__.py    # marcador del paquete
+├── api.py         # app FastAPI y endpoints (capa fina, delega en los modulos de abajo)
+├── models.py       # schemas Pydantic (requests/responses, contrato fijo de la API)
+├── config.py        # lectura de env vars y config del graph de scrapegraphai
+├── currency.py      # tasas de cambio y conversion de precios a USD
+├── scraping.py       # fetch_course_titles: la logica de scraping en si (siempre contra Hotmart)
+└── cli.py            # CLI de ejemplo (entry point `extraer-cursos`)
+```
+
+`api.py` no tiene logica propia de scraping ni de conversion de moneda: solo arma la `FastAPI app`, valida el request con los modelos de `models.py` y llama a las funciones de `config.py`/`scraping.py`. Esto permite reusar `fetch_course_titles` tanto desde la API como desde la CLI sin duplicar codigo.
 
 ## Detalle tecnico: contenido cargado por JS (SPAs) y sus limites
 
 `scrapegraphai` usa Playwright para obtener el HTML de cada pagina. Por defecto solo espera a `domcontentloaded`, sin esperar a que terminen las llamadas asincronas que hidratan la pagina. En sitios tipo SPA, las tarjetas de producto/curso (con su precio) suelen cargarse en una llamada posterior a la carga inicial y no estan presentes en ese HTML, aunque si sean visibles para un usuario real en el navegador.
 
-**Solucion aplicada**: `_build_graph_config` pasa `loader_kwargs={"load_state": "networkidle", "timeout": 30}`, lo que hace que Playwright espere a que la red quede inactiva (JS ya hidratado) antes de leer el HTML, sin perder el modo stealth normal de scraping (a diferencia de la alternativa `requires_js_support: True`, que usa un codepath distinto sin stealth).
-
-**Resultados verificados al probar varios marketplaces:**
-
-| Sitio      | URL de busqueda usada                                    | Resultado                                                                                   |
-| ---------- | ---------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| Hotmart    | `hotmart.com/es/marketplace/productos?q=...`               | Funciona bien, nombre y precio correctos.                                                    |
-| Udemy      | `udemy.com/courses/search/?q=...`                           | **Falla con timeout.** El HTML inicial (`load`) no trae las tarjetas (se renderizan despues via JS), y Udemy nunca llega a `networkidle` dentro del limite de accion de Playwright (~30s, fijo internamente por `scrapegraphai`/Playwright y no configurable via `loader_kwargs`). Se probo tambien el backend `playwright_scroll` de `scrapegraphai` como alternativa, pero tiene un bug propio de la libreria (intenta `pip install playwright_scroll`, un paquete que no existe) que lo hace inutilizable tal cual. |
-| Coursera   | `coursera.org/search?query=...`                             | La mayoria de resultados son cursos por suscripcion sin precio individual visible en el listado -- limitacion del modelo de negocio del sitio, no del scraper. |
-
-En resumen: `/recursos` generaliza bien a marketplaces cuyo listado hidrata rapido (Hotmart y sitios similares), pero sitios con trafico de red constante en segundo plano (analytics/trackers que nunca dejan la red "idle", como Udemy) pueden dar `502` por timeout -- es una limitacion de la version actual de `scrapegraphai`, no algo resoluble desde la config publica de esta API.
+**Solucion aplicada**: `build_graph_config` pasa `loader_kwargs={"load_state": "networkidle", "timeout": 30}`, lo que hace que Playwright espere a que la red quede inactiva (JS ya hidratado) antes de leer el HTML, sin perder el modo stealth normal de scraping (a diferencia de la alternativa `requires_js_support: True`, que usa un codepath distinto sin stealth). Verificado contra Hotmart (`hotmart.com/es/marketplace/productos?q=...`): funciona bien, titulo y precio correctos.
 
 ## Limitaciones conocidas
 
-- **Timeout en SPAs con trafico de fondo constante**: ver tabla arriba (caso confirmado: Udemy).
-- **Marketplaces sin precio en el listado** (ej. Coursera, suscripciones): `/recursos` puede devolver una lista vacia o incompleta si la pagina no muestra precio por recurso.
+- **Marketplace fijo (Hotmart)**: `/recursos` no acepta otra fuente por request; si en el futuro se necesita otro marketplace hay que extender `build_search_url` en `scraping.py`.
 - **Chunking de paginas largas**: en paginas con mucho contenido, el dato buscado puede quedar en una parte que el pipeline de resumen/extraccion no prioriza.
-- **Costo y latencia**: cada llamada a `/recursos` o `/scrape` implica al menos una llamada al LLM y un render de pagina completo con Playwright, asi que el tiempo de respuesta es del orden de varios segundos.
+- **Costo y latencia**: cada llamada a `/recursos` implica al menos una llamada al LLM y un render de pagina completo con Playwright, asi que el tiempo de respuesta es del orden de varios segundos.
