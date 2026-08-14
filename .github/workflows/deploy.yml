@@ -53,7 +53,7 @@ jobs:
             .venv/bin/pip install .
             .venv/bin/playwright install chromium || true
 
-      - name: Reiniciar y verificar uvicorn
+      - name: Prueba diagnostica de Uvicorn (Sin background)
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -64,20 +64,10 @@ jobs:
             cd ${{ secrets.PROJECT_PATH }}
             pkill -9 -f "uvicorn scrapegraph_api" || true
             
-            echo "1. Probando arranque de Uvicorn por 5 segundos..."
+            echo "1. Ejecutando Uvicorn en primer plano (5 segundos)..."
             timeout 5s .venv/bin/python -m uvicorn scrapegraph_api.api:app --host 127.0.0.1 --port 8255 > uvicorn_error.log 2>&1 || true
             
-            echo "--- LOG DE ARRANQUE ---"
-            cat uvicorn_error.log || echo "(vacio)"
-            echo "-----------------------"
-            
-            echo "2. Arrancando Uvicorn definitivo en background..."
-            nohup .venv/bin/python -m uvicorn scrapegraph_api.api:app --host 127.0.0.1 --port 8255 </dev/null >/dev/null 2>&1 &
-            sleep 2
-            
-            if pgrep -f "uvicorn scrapegraph_api" > /dev/null; then
-              echo "✅ Despliegue completado y Uvicorn está activo."
-            else
-              echo "❌ ERROR: Uvicorn crasheó. Revisa el log de arriba."
-              exit 1
-            fi
+            echo "--- LOG EXCTO DE UVICORN ---"
+            cat uvicorn_error.log || echo "Vacio"
+            echo "----------------------------"
+            echo "Prueba terminada. Si ves el texto de Uvicorn arriba, el Python está perfecto."
