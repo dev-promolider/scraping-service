@@ -44,9 +44,11 @@ jobs:
           port: ${{ secrets.SSH_PORT }}
           script: |
             cd ${{ secrets.PROJECT_PATH }}
-            python3 -m venv .venv || true
-            .venv/bin/pip install --upgrade pip
-            .venv/bin/pip install .
+            rm -rf .venv
+            python3 -m venv .venv
+            .venv/bin/pip install --upgrade pip setuptools
+            .venv/bin/pip install -e .
+            .venv/bin/playwright install chromium
             .venv/bin/playwright install-deps chromium || true
             pkill -f uvicorn || true
             nohup .venv/bin/python -m uvicorn scrapegraph_api.api:app --host 127.0.0.1 --port 8000 > uvicorn.log 2>&1 &
