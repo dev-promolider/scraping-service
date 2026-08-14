@@ -54,6 +54,21 @@ jobs:
             .venv/bin/playwright install chromium || true
 
       - name: Reiniciar servicio uvicorn
+        continue-on-error: true
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          script_stop: false
+          script: |
+            cd ${{ secrets.PROJECT_PATH }}
+            pkill -f "uvicorn scrapegraph_api" || true
+            sleep 1
+            setsid .venv/bin/python -m uvicorn scrapegraph_api.api:app --host 127.0.0.1 --port 8000 > uvicorn.log 2>&1 &
+
+      - name: Verificar que uvicorn esta corriendo
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -61,16 +76,11 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.SSH_PORT }}
           script: |
-            cd ${{ secrets.PROJECT_PATH }}
-            pkill -f "uvicorn scrapegraph_api" || true
-            sleep 1
-            nohup .venv/bin/python -m uvicorn scrapegraph_api.api:app --host 127.0.0.1 --port 8000 </dev/null > uvicorn.log 2>&1 &
-            disown
-            sleep 2
+            sleep 3
             if pgrep -f "uvicorn scrapegraph_api" > /dev/null; then
-              echo "Uvicorn iniciado correctamente (PID: $(pgrep -f 'uvicorn scrapegraph_api'))"
+              echo "Uvicorn corriendo correctamente (PID: $(pgrep -f 'uvicorn scrapegraph_api'))"
             else
-              echo "ERROR: Uvicorn no pudo iniciar. Últimas líneas del log:"
-              tail -20 uvicorn.log
+              echo "ERROR: Uvicorn no pudo iniciar. Log:"
+              cat ${{ secrets.PROJECT_PATH }}/uvicorn.log 2>/dev/null || echo "(sin log)"
               exit 1
             fi
