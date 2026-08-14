@@ -45,6 +45,7 @@ jobs:
           script: |
             cd ${{ secrets.PROJECT_PATH }}
             python3 -m venv .venv || true
-            source .venv/bin/activate
-            pip install -e .
-            playwright install chromium
+            .venv/bin/pip install --upgrade pip
+            .venv/bin/pip install .
+            .venv/bin/playwright install chromium
+            .venv/bin/playwright install-deps chromium || true
