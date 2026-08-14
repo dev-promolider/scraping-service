@@ -18,5 +18,5 @@ dependencies = [
 extraer-cursos = "scrapegraph_api.cli:main"
 
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
