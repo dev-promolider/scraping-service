@@ -42,6 +42,7 @@ jobs:
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.SSH_PORT }}
+          timeout: "10m"
           script: |
             cd ${{ secrets.PROJECT_PATH }}
             # Buscar ejecutable de Python 3.10+ en el servidor (ej. cPanel ea-python310, ea-python311 o /usr/bin/python3)
