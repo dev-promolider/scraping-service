@@ -47,5 +47,6 @@ jobs:
             python3 -m venv .venv || true
             .venv/bin/pip install --upgrade pip
             .venv/bin/pip install .
-            .venv/bin/playwright install chromium
             .venv/bin/playwright install-deps chromium || true
+            pkill -f uvicorn || true
+            nohup .venv/bin/python -m uvicorn scrapegraph_api.api:app --host 127.0.0.1 --port 8000 > uvicorn.log 2>&1 &
