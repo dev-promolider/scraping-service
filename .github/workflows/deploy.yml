@@ -66,7 +66,7 @@ jobs:
             cd ${{ secrets.PROJECT_PATH }}
             pkill -9 -f "uvicorn scrapegraph_api" || true
             sleep 2
-            setsid .venv/bin/python -m uvicorn scrapegraph_api.api:app --host 127.0.0.1 --port 8000 > uvicorn.log 2>&1 &
+            nohup .venv/bin/python -m uvicorn scrapegraph_api.api:app --host 127.0.0.1 --port 8255 </dev/null > uvicorn.log 2>&1 &
 
       - name: Verificar que uvicorn esta corriendo
         uses: appleboy/ssh-action@v1.0.3
