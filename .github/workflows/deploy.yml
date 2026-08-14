@@ -53,37 +53,27 @@ jobs:
             .venv/bin/pip install .
             .venv/bin/playwright install chromium || true
 
-      - name: Reiniciar servicio uvicorn
-        continue-on-error: true
+      - name: Reiniciar servicio uvicorn y leer log
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.SSH_PORT }}
-          script_stop: false
           script: |
             cd ${{ secrets.PROJECT_PATH }}
             pkill -9 -f "uvicorn scrapegraph_api" || true
             sleep 2
-            nohup .venv/bin/python -m uvicorn scrapegraph_api.api:app --host 127.0.0.1 --port 8255 </dev/null > uvicorn.log 2>&1 &
-
-      - name: Verificar que uvicorn esta corriendo
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: ${{ secrets.SSH_PORT }}
-          script: |
-            cd ${{ secrets.PROJECT_PATH }}
-            sleep 4
-            echo "--- LOG DE UVICORN ---"
-            cat uvicorn.log || echo "(sin log)"
-            echo "----------------------"
+            echo "Arrancando Uvicorn..."
+            # Ejecutamos en background y guardamos el log en el mismo paso
+            nohup .venv/bin/python -m uvicorn scrapegraph_api.api:app --host 127.0.0.1 --port 8255 </dev/null > uvicorn_error.log 2>&1 &
+            sleep 5
+            echo "--- RESULTADO DE ARRANQUE (uvicorn_error.log) ---"
+            cat uvicorn_error.log
+            echo "-------------------------------------------------"
             if pgrep -f "uvicorn scrapegraph_api" > /dev/null; then
-              echo "Uvicorn corriendo (PID: $(pgrep -f 'uvicorn scrapegraph_api'))"
+              echo "Uvicorn arrancó con éxito."
             else
-              echo "ERROR: Uvicorn se cerró inesperadamente."
+              echo "ERROR CRÍTICO: Uvicorn crasheó al instante. Revisa el log arriba."
               exit 1
             fi
