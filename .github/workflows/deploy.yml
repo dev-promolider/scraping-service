@@ -64,8 +64,8 @@ jobs:
           script_stop: false
           script: |
             cd ${{ secrets.PROJECT_PATH }}
-            pkill -f "uvicorn scrapegraph_api" || true
-            sleep 1
+            pkill -9 -f "uvicorn scrapegraph_api" || true
+            sleep 2
             setsid .venv/bin/python -m uvicorn scrapegraph_api.api:app --host 127.0.0.1 --port 8000 > uvicorn.log 2>&1 &
 
       - name: Verificar que uvicorn esta corriendo
@@ -76,11 +76,14 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.SSH_PORT }}
           script: |
-            sleep 3
+            cd ${{ secrets.PROJECT_PATH }}
+            sleep 4
+            echo "--- LOG DE UVICORN ---"
+            cat uvicorn.log || echo "(sin log)"
+            echo "----------------------"
             if pgrep -f "uvicorn scrapegraph_api" > /dev/null; then
-              echo "Uvicorn corriendo correctamente (PID: $(pgrep -f 'uvicorn scrapegraph_api'))"
+              echo "Uvicorn corriendo (PID: $(pgrep -f 'uvicorn scrapegraph_api'))"
             else
-              echo "ERROR: Uvicorn no pudo iniciar. Log:"
-              cat ${{ secrets.PROJECT_PATH }}/uvicorn.log 2>/dev/null || echo "(sin log)"
+              echo "ERROR: Uvicorn se cerró inesperadamente."
               exit 1
             fi
