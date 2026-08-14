@@ -53,7 +53,24 @@ jobs:
             .venv/bin/pip install .
             .venv/bin/playwright install chromium || true
 
-      - name: Reiniciar servicio uvicorn y leer log
+      - name: Reiniciar servicio uvicorn
+        continue-on-error: true
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          command_timeout: "10s"
+          script: |
+            cd ${{ secrets.PROJECT_PATH }}
+            pkill -9 -f "uvicorn scrapegraph_api" || true
+            echo "Iniciando uvicorn en background..."
+            nohup .venv/bin/python -m uvicorn scrapegraph_api.api:app --host 127.0.0.1 --port 8255 > uvicorn_error.log 2>&1 &
+            sleep 2
+
+      - name: Leer resultado del arranque
+        if: always()
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -62,18 +79,12 @@ jobs:
           port: ${{ secrets.SSH_PORT }}
           script: |
             cd ${{ secrets.PROJECT_PATH }}
-            pkill -9 -f "uvicorn scrapegraph_api" || true
-            sleep 2
-            echo "Arrancando Uvicorn..."
-            # Ejecutamos en background y guardamos el log en el mismo paso
-            nohup .venv/bin/python -m uvicorn scrapegraph_api.api:app --host 127.0.0.1 --port 8255 </dev/null > uvicorn_error.log 2>&1 &
-            sleep 5
             echo "--- RESULTADO DE ARRANQUE (uvicorn_error.log) ---"
-            cat uvicorn_error.log
+            cat uvicorn_error.log || echo "No se genero log"
             echo "-------------------------------------------------"
             if pgrep -f "uvicorn scrapegraph_api" > /dev/null; then
-              echo "Uvicorn arrancó con éxito."
+              echo "✅ Uvicorn está corriendo."
             else
-              echo "ERROR CRÍTICO: Uvicorn crasheó al instante. Revisa el log arriba."
+              echo "❌ ERROR: Uvicorn no está corriendo."
               exit 1
             fi
