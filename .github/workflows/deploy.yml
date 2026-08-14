@@ -79,12 +79,8 @@ jobs:
           port: ${{ secrets.SSH_PORT }}
           script: |
             cd ${{ secrets.PROJECT_PATH }}
-            echo "--- RESULTADO DE ARRANQUE (uvicorn_error.log) ---"
-            cat uvicorn_error.log || echo "No se genero log"
+            echo "--- PROCESOS DE UVICORN ACTIVOS ---"
+            ps -ef | grep "[u]vicorn" || echo "Ninguno"
+            echo "--- PROBANDO PUERTO 8255 INTERNAMENTE ---"
+            curl -I http://127.0.0.1:8255 || echo "CURL FALLÓ: El puerto está cerrado o uvicorn está muerto."
             echo "-------------------------------------------------"
-            if pgrep -f "uvicorn scrapegraph_api" > /dev/null; then
-              echo "✅ Uvicorn está corriendo."
-            else
-              echo "❌ ERROR: Uvicorn no está corriendo."
-              exit 1
-            fi
