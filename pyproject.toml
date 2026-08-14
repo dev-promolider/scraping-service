@@ -6,7 +6,7 @@ readme = "README.md"
 authors = [
     { name = "joansolignac", email = "joanpsolignac@gmail.com" }
 ]
-requires-python = ">=3.14"
+requires-python = ">=3.10"
 dependencies = [
     "fastapi>=0.141.1",
     "python-dotenv>=1.2.2",
@@ -20,3 +20,6 @@ extraer-cursos = "scrapegraph_api.cli:main"
 [build-system]
 requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
