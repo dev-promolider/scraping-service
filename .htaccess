@@ -1,4 +1,5 @@
 RewriteEngine On
+RewriteRule ^index\.php$ http://127.0.0.1:8255/ [P,L]
 RewriteRule ^$ http://127.0.0.1:8255/ [P,L]
 RewriteCond %{REQUEST_FILENAME} !-f
 RewriteCond %{REQUEST_FILENAME} !-d
