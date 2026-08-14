@@ -53,34 +53,31 @@ jobs:
             .venv/bin/pip install .
             .venv/bin/playwright install chromium || true
 
-      - name: Reiniciar servicio uvicorn
-        continue-on-error: true
+      - name: Reiniciar y verificar uvicorn
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.SSH_PORT }}
-          command_timeout: "10s"
           script: |
             cd ${{ secrets.PROJECT_PATH }}
             pkill -9 -f "uvicorn scrapegraph_api" || true
-            echo "Iniciando uvicorn en background..."
-            nohup .venv/bin/python -m uvicorn scrapegraph_api.api:app --host 127.0.0.1 --port 8255 > uvicorn_error.log 2>&1 &
+            
+            echo "1. Probando arranque de Uvicorn por 5 segundos..."
+            timeout 5s .venv/bin/python -m uvicorn scrapegraph_api.api:app --host 127.0.0.1 --port 8255 > uvicorn_error.log 2>&1 || true
+            
+            echo "--- LOG DE ARRANQUE ---"
+            cat uvicorn_error.log || echo "(vacio)"
+            echo "-----------------------"
+            
+            echo "2. Arrancando Uvicorn definitivo en background..."
+            nohup .venv/bin/python -m uvicorn scrapegraph_api.api:app --host 127.0.0.1 --port 8255 </dev/null >/dev/null 2>&1 &
             sleep 2
-
-      - name: Leer resultado del arranque
-        if: always()
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: ${{ secrets.SSH_PORT }}
-          script: |
-            cd ${{ secrets.PROJECT_PATH }}
-            echo "--- PROCESOS DE UVICORN ACTIVOS ---"
-            ps -ef | grep "[u]vicorn" || echo "Ninguno"
-            echo "--- PROBANDO PUERTO 8255 INTERNAMENTE ---"
-            curl -I http://127.0.0.1:8255 || echo "CURL FALLÓ: El puerto está cerrado o uvicorn está muerto."
-            echo "-------------------------------------------------"
+            
+            if pgrep -f "uvicorn scrapegraph_api" > /dev/null; then
+              echo "✅ Despliegue completado y Uvicorn está activo."
+            else
+              echo "❌ ERROR: Uvicorn crasheó. Revisa el log de arriba."
+              exit 1
+            fi
