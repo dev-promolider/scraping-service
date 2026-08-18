@@ -14,6 +14,7 @@ import sys
 
 from dotenv import load_dotenv
 
+from scrapegraph_api.config import PROVIDER_ENV_KEYS
 from scrapegraph_api.scraping import fetch_course_titles
 
 
@@ -34,9 +35,11 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    api_key = os.getenv("OPENAI_API_KEY")
+    provider = os.getenv("LLM_PROVIDER", "openai")
+    key_env, _, _ = PROVIDER_ENV_KEYS.get(provider, PROVIDER_ENV_KEYS["openai"])
+    api_key = os.getenv(key_env)
     if not api_key:
-        sys.exit("OPENAI_API_KEY no esta configurada en el .env")
+        sys.exit(f"{key_env} no esta configurada en el .env")
 
     course_titles = fetch_course_titles(topic=args.topic, api_key=api_key)
 

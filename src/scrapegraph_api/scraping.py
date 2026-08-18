@@ -12,7 +12,6 @@ from scrapegraph_api.models import ListaCursosDetectados
 
 HOTMART_SEARCH_URL = "https://hotmart.com/es/marketplace/productos?q={query}"
 
-
 def build_search_url(topic: str) -> str:
     """URL de busqueda en Hotmart para un topic dado."""
     return HOTMART_SEARCH_URL.format(query=quote(topic))
