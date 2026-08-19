@@ -23,6 +23,9 @@ jobs:
           cat > .env << EOF
           OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
           OPENAI_MODEL=${{ secrets.OPENAI_MODEL }}
+          DEEPSEEK_API_KEY=${{ secrets.DEEPSEEK_API_KEY }}
+          DEEPSEEK_MODEL=${{ secrets.DEEPSEEK_MODEL }}
+          LLM_PROVIDER=${{ secrets.LLM_PROVIDER }}
           EOF
 
       - name: Desplegar archivos al servidor por SCP
@@ -51,7 +54,6 @@ jobs:
             $PYTHON_BIN -m venv .venv
             .venv/bin/pip install --upgrade pip
             .venv/bin/pip install .
-            .venv/bin/playwright install chromium || true
 
       - name: Reiniciar Uvicorn
         uses: appleboy/ssh-action@v1.0.3

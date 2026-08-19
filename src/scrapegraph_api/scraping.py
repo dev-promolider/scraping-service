@@ -1,3 +1,4 @@
+import requests
 from urllib.parse import quote
 
 from fastapi import HTTPException
@@ -20,12 +21,24 @@ def fetch_course_titles(topic: str, api_key: str, max_items: int = 40) -> list[d
     resultados titulo, descripcion breve y precio (convertido a USD) de cada
     uno, hasta `max_items`.
 
-    Usa 'schema' para forzar salida estructurada del LLM (evita el bug del
-    parser JSON en generate_answer_node.py de scrapegraphai) en vez de dejarlo
-    devolver texto libre.
+    Usa requests para descargar el HTML plano de la pagina, evitando depender de
+    Playwright (que requiere libgbm/Chromium en el servidor) y entrega el HTML
+    directamente al SmartScraperGraph.
     """
-    source = build_search_url(topic)
+    source_url = build_search_url(topic)
     config = build_graph_config(api_key)
+
+    try:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        response = requests.get(source_url, headers=headers, timeout=20)
+        response.raise_for_status()
+        html_content = response.text
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502, detail=f"Failed to fetch content from Hotmart ({source_url}): {exc}"
+        ) from exc
 
     try:
         graph = SmartScraperGraph(
@@ -37,14 +50,14 @@ def fetch_course_titles(topic: str, api_key: str, max_items: int = 40) -> list[d
                 "se muestra (ej. USD, PEN, EUR, BRL). Ignora los cursos sin "
                 "precio visible."
             ),
-            source=source,
+            source=html_content,
             config=config,
             schema=ListaCursosDetectados,
         )
         result = graph.run()
     except Exception as exc:
         raise HTTPException(
-            status_code=502, detail=f"Scraping failed ({source}): {exc}"
+            status_code=502, detail=f"Scraping analysis failed: {exc}"
         ) from exc
 
     cursos_raw = result.get("cursos", []) if isinstance(result, dict) else []
