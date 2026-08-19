@@ -3,7 +3,7 @@
 cd "$(dirname "$0")"
 
 echo "Matando procesos anteriores de uvicorn..."
-pkill -f "uvicorn scrapegraph_api" || true
+pkill -9 -f "uvicorn" || true
 sleep 1
 
 echo "Arrancando Uvicorn en screen..."

@@ -98,8 +98,10 @@ def fetch_course_titles(topic: str, api_key: str, max_items: int = 40) -> list[d
                             amount = pay_methods[0].get("amount", {})
                             product_map[offer_key]["precio_valor"] = amount.get("value", 0.0)
                             product_map[offer_key]["moneda"] = amount.get("currency", "USD")
-        except Exception:
-            # Permitir fallar con precio 0.0 para no romper el flujo
+        except Exception as e:
+            # Registrar el error en consola para depurar si la API falla en el daemon
+            import sys
+            print(f"Error fetching prices from Hotmart: {e}", file=sys.stderr)
             pass
 
     clean_products = list(product_map.values())
