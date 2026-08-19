@@ -1,3 +1,5 @@
+import json
+import re
 import requests
 from urllib.parse import quote
 
@@ -21,17 +23,20 @@ def fetch_course_titles(topic: str, api_key: str, max_items: int = 40) -> list[d
     resultados titulo, descripcion breve y precio (convertido a USD) de cada
     uno, hasta `max_items`.
 
-    Usa requests para descargar el HTML plano de la pagina, evitando depender de
-    Playwright (que requiere libgbm/Chromium en el servidor) y entrega el HTML
-    directamente al SmartScraperGraph.
+    Primero descarga el HTML plano para extraer metadatos de productos de __NEXT_DATA__,
+    luego realiza una peticion POST a la API publica de Hotmart para obtener los precios
+    y monedas reales de las ofertas encontradas, y finalmente entrega un JSON consolidado
+    a SmartScraperGraph para filtrar y estructurar.
     """
     source_url = build_search_url(topic)
     config = build_graph_config(api_key)
 
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+
+    # 1. Obtener HTML estatico
     try:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        }
         response = requests.get(source_url, headers=headers, timeout=20)
         response.raise_for_status()
         html_content = response.text
@@ -40,17 +45,75 @@ def fetch_course_titles(topic: str, api_key: str, max_items: int = 40) -> list[d
             status_code=502, detail=f"Failed to fetch content from Hotmart ({source_url}): {exc}"
         ) from exc
 
+    # 2. Extraer datos JSON incrustados en __NEXT_DATA__
+    match = re.search(r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', html_content)
+    if not match:
+        raise HTTPException(
+            status_code=502, detail="Hotmart structure parsing failed (NEXT_DATA not found)"
+        )
+
+    try:
+        metadata = json.loads(match.group(1))
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502, detail="Failed to parse Hotmart metadata JSON"
+        )
+
+    results = metadata.get("props", {}).get("pageProps", {}).get("resultsData", {}).get("requestData", {}).get("results", [])
+    if not results:
+        return []
+
+    # 3. Mapear ofertas y preparar consulta de precios a la API
+    offers_payload = []
+    product_map = {}
+
+    for r in results[:max_items]:
+        offer_code = r.get("offer")
+        if offer_code:
+            offers_payload.append({"products": [{"offer": offer_code}], "additionalData": {"shopperIp": "1.1.1.1"}})
+            product_map[offer_code] = {
+                "title": r.get("title", ""),
+                "description": r.get("description", ""),
+                "precio_valor": 0.0,
+                "moneda": "USD"
+            }
+
+    # 4. Consultar precios via API externa
+    if offers_payload:
+        try:
+            api_url = "https://api-display-gateway.dsp.hotmart.com/public/v1/payment/checkout/load-products"
+            api_response = requests.post(api_url, json=offers_payload, headers=headers, timeout=15)
+            api_response.raise_for_status()
+            prices_data = api_response.json()
+
+            for pr in prices_data.get("productsResponse", []):
+                prods = pr.get("products", [])
+                if prods:
+                    prod = prods[0]
+                    offer_info = prod.get("offer", {})
+                    offer_key = offer_info.get("offer")
+                    if offer_key in product_map:
+                        pay_methods = offer_info.get("paymentMethods", [])
+                        if pay_methods:
+                            amount = pay_methods[0].get("amount", {})
+                            product_map[offer_key]["precio_valor"] = amount.get("value", 0.0)
+                            product_map[offer_key]["moneda"] = amount.get("currency", "USD")
+        except Exception:
+            # Permitir fallar con precio 0.0 para no romper el flujo
+            pass
+
+    clean_products = list(product_map.values())
+
+    # 5. Ejecutar analisis con LLM sobre el JSON limpio
     try:
         graph = SmartScraperGraph(
             prompt=(
                 f"Extrae hasta {max_items} cursos relacionados a '{topic}' "
-                "visibles en esta pagina de un marketplace, con: su titulo "
-                "exacto, un resumen breve (1-2 oraciones) de que trata, el "
-                "valor numerico de su precio, y el codigo de moneda en el que "
-                "se muestra (ej. USD, PEN, EUR, BRL). Ignora los cursos sin "
-                "precio visible."
+                "de la lista JSON provista, con: su titulo exacto, un resumen breve "
+                "(1-2 oraciones) de que trata, el valor numerico de su precio (precio_valor), "
+                "y el codigo de moneda (moneda). Ignora los cursos con precio_valor de 0."
             ),
-            source=html_content,
+            source=json.dumps(clean_products),
             config=config,
             schema=ListaCursosDetectados,
         )
