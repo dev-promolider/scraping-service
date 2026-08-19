@@ -104,39 +104,19 @@ def fetch_course_titles(topic: str, api_key: str, max_items: int = 40) -> list[d
 
     clean_products = list(product_map.values())
 
-    # 5. Ejecutar analisis con LLM sobre el JSON limpio
-    try:
-        graph = SmartScraperGraph(
-            prompt=(
-                f"Extrae hasta {max_items} cursos relacionados a '{topic}' "
-                "de la lista JSON provista, con: su titulo exacto, un resumen breve "
-                "(1-2 oraciones) de que trata, el valor numerico de su precio (precio_valor), "
-                "y el codigo de moneda (moneda). Ignora los cursos con precio_valor de 0."
-            ),
-            source=json.dumps(clean_products),
-            config=config,
-            schema=ListaCursosDetectados,
-        )
-        result = graph.run()
-    except Exception as exc:
-        raise HTTPException(
-            status_code=502, detail=f"Scraping analysis failed: {exc}"
-        ) from exc
-
-    cursos_raw = result.get("cursos", []) if isinstance(result, dict) else []
-
+    # 5. Formatear y retornar la lista final de cursos de manera 100% programática y confiable
     course_titles = []
-    for c in cursos_raw[:max_items]:
-        precio_usd = convertir_a_usd(c.get("precio_valor", 0), c.get("moneda", ""))
+    for prod in clean_products[:max_items]:
+        precio_usd = convertir_a_usd(prod["precio_valor"], prod["moneda"])
         price_str = (
             f"${precio_usd:.2f}"
             if precio_usd is not None
-            else f"{c.get('precio_valor')} {c.get('moneda')}"
+            else f"{prod['precio_valor']} {prod['moneda']}"
         )
         course_titles.append(
             {
-                "title": c.get("title", ""),
-                "description": c.get("description", ""),
+                "title": prod["title"],
+                "description": prod["description"],
                 "price": price_str,
             }
         )
