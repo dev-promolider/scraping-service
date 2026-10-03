@@ -1,126 +1,126 @@
+"""Extractor de Hotmart usado por el contrato historico de Pickle."""
+
 import json
-import re
-import requests
+import logging
+import math
+import os
+from ipaddress import IPv4Address, AddressValueError
 from urllib.parse import quote
 
+import requests
+from bs4 import BeautifulSoup
 from fastapi import HTTPException
-from scrapegraphai.graphs import SmartScraperGraph
 
-from scrapegraph_api.config import build_graph_config
-from scrapegraph_api.currency import convertir_a_usd
-from scrapegraph_api.models import ListaCursosDetectados
 
 HOTMART_SEARCH_URL = "https://hotmart.com/es/marketplace/productos?q={query}"
+HOTMART_PRICE_URL = (
+    "https://api-display-gateway.dsp.hotmart.com/public/v1/payment/checkout/load-products"
+)
+HEADERS = {"User-Agent": "PickleCourseResearch/1.0"}
+logger = logging.getLogger(__name__)
+
 
 def build_search_url(topic: str) -> str:
-    """URL de busqueda en Hotmart para un topic dado."""
     return HOTMART_SEARCH_URL.format(query=quote(topic))
 
 
-def fetch_course_titles(topic: str, api_key: str, max_items: int = 40) -> list[dict]:
-    """Busca en Hotmart cursos relacionados a `topic` y extrae de la pagina de
-    resultados titulo, descripcion breve y precio (convertido a USD) de cada
-    uno, hasta `max_items`.
-
-    Primero descarga el HTML plano para extraer metadatos de productos de __NEXT_DATA__,
-    luego realiza una peticion POST a la API publica de Hotmart para obtener los precios
-    y monedas reales de las ofertas encontradas, y finalmente entrega un JSON consolidado
-    a SmartScraperGraph para filtrar y estructurar.
-    """
-    source_url = build_search_url(topic)
-    config = build_graph_config(api_key)
-
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
-
-    # 1. Obtener HTML estatico
+def _parse_results(html: str) -> list[dict]:
+    script = BeautifulSoup(html, "html.parser").find("script", id="__NEXT_DATA__")
+    if script is None or not script.string:
+        raise HTTPException(status_code=502, detail="Hotmart cambio su pagina de resultados")
     try:
-        response = requests.get(source_url, headers=headers, timeout=20)
+        metadata = json.loads(script.string)
+        results = metadata["props"]["pageProps"]["resultsData"]["requestData"]["results"]
+    except (ValueError, KeyError, TypeError) as exc:
+        raise HTTPException(status_code=502, detail="Hotmart cambio su estructura de datos") from exc
+    if not isinstance(results, list):
+        raise HTTPException(status_code=502, detail="Hotmart devolvio resultados invalidos")
+    return results
+
+
+def _format_price(amount: object, currency: object) -> str:
+    if isinstance(amount, bool) or not isinstance(amount, (int, float)):
+        return "No disponible"
+    if not math.isfinite(amount) or amount < 0:
+        return "No disponible"
+    code = str(currency or "").upper()
+    if len(code) != 3 or not code.isalpha():
+        return "No disponible"
+    return f"${amount:.2f}" if code == "USD" else f"{amount:.2f} {code}"
+
+
+def fetch_course_titles(
+    topic: str, api_key: str | None = None, max_items: int = 40
+) -> list[dict[str, str]]:
+    """Busca ofertas publicas; `api_key` se conserva para llamadas antiguas."""
+    try:
+        response = requests.get(build_search_url(topic), headers=HEADERS, timeout=20)
         response.raise_for_status()
-        html_content = response.text
-    except Exception as exc:
-        raise HTTPException(
-            status_code=502, detail=f"Failed to fetch content from Hotmart ({source_url}): {exc}"
-        ) from exc
+    except requests.HTTPError as exc:
+        code = exc.response.status_code if exc.response is not None else None
+        if code in (403, 429):
+            raise HTTPException(status_code=code, detail="Hotmart limito el acceso") from exc
+        raise HTTPException(status_code=502, detail="No se pudo consultar Hotmart") from exc
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail="No se pudo consultar Hotmart") from exc
 
-    # 2. Extraer datos JSON incrustados en __NEXT_DATA__
-    match = re.search(r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', html_content)
-    if not match:
-        raise HTTPException(
-            status_code=502, detail="Hotmart structure parsing failed (NEXT_DATA not found)"
-        )
+    results = _parse_results(response.text)
+    products = []
+    offers = {}
+    for result in results[:max_items]:
+        if not isinstance(result, dict):
+            continue
+        title = str(result.get("title") or "").strip()
+        if not title:
+            continue
+        product = {
+            "title": title,
+            "description": str(result.get("description") or "").strip(),
+            "price": "No disponible",
+        }
+        # Conserva el enlace observado; no fabrica rutas a partir del título.
+        course_url = result.get("url")
+        if isinstance(course_url, str) and course_url.startswith("https://"):
+            product["url"] = course_url
+        products.append(product)
+        offer = result.get("offer")
+        if isinstance(offer, str) and offer:
+            offers.setdefault(offer, []).append(product)
 
-    try:
-        metadata = json.loads(match.group(1))
-    except Exception as exc:
-        raise HTTPException(
-            status_code=502, detail="Failed to parse Hotmart metadata JSON"
-        )
-
-    results = metadata.get("props", {}).get("pageProps", {}).get("resultsData", {}).get("requestData", {}).get("results", [])
-    if not results:
-        return []
-
-    # 3. Mapear ofertas y preparar consulta de precios a la API
-    offers_payload = []
-    product_map = {}
-
-    for r in results[:max_items]:
-        offer_code = r.get("offer")
-        if offer_code:
-            offers_payload.append({"products": [{"offer": offer_code}], "additionalData": {"shopperIp": "1.1.1.1"}})
-            product_map[offer_code] = {
-                "title": r.get("title", ""),
-                "description": r.get("description", ""),
-                "precio_valor": 0.0,
-                "moneda": "USD"
-            }
-
-    # 4. Consultar precios via API externa
-    if offers_payload:
+    if offers:
+        shopper_ip = os.getenv("HOTMART_SHOPPER_IP", "1.1.1.1")
         try:
-            api_url = "https://api-display-gateway.dsp.hotmart.com/public/v1/payment/checkout/load-products"
-            api_response = requests.post(api_url, json=offers_payload, headers=headers, timeout=15)
-            api_response.raise_for_status()
-            prices_data = api_response.json()
-
-            for pr in prices_data.get("productsResponse", []):
-                prods = pr.get("products", [])
-                if prods:
-                    prod = prods[0]
-                    offer_info = prod.get("offer", {})
-                    if offer_info:
-                        offer_key = offer_info.get("key")
-                        if offer_key in product_map:
-                            pay_methods = offer_info.get("paymentMethods", [])
-                            if pay_methods:
-                                amount = pay_methods[0].get("amount", {})
-                                product_map[offer_key]["precio_valor"] = amount.get("value", 0.0)
-                                product_map[offer_key]["moneda"] = amount.get("currency", "USD")
-        except Exception as e:
-            # Registrar el error en consola para depurar si la API falla en el daemon
-            import sys
-            print(f"Error fetching prices from Hotmart: {e}", file=sys.stderr)
-            pass
-
-    clean_products = list(product_map.values())
-
-    # 5. Formatear y retornar la lista final de cursos de manera 100% programática y confiable
-    course_titles = []
-    for prod in clean_products[:max_items]:
-        precio_usd = convertir_a_usd(prod["precio_valor"], prod["moneda"])
-        price_str = (
-            f"${precio_usd:.2f}"
-            if precio_usd is not None
-            else f"{prod['precio_valor']} {prod['moneda']}"
-        )
-        course_titles.append(
+            IPv4Address(shopper_ip)
+        except AddressValueError as exc:
+            raise HTTPException(
+                status_code=500, detail="HOTMART_SHOPPER_IP debe ser una IPv4 valida"
+            ) from exc
+        payload = [
             {
-                "title": prod["title"],
-                "description": prod["description"],
-                "price": price_str,
+                "products": [{"offer": code}],
+                "additionalData": {"shopperIp": shopper_ip},
             }
-        )
+            for code in offers
+        ]
+        try:
+            price_response = requests.post(
+                HOTMART_PRICE_URL, json=payload, headers=HEADERS, timeout=15
+            )
+            price_response.raise_for_status()
+            prices = price_response.json()
+            if not isinstance(prices, dict):
+                raise ValueError("Respuesta de precios invalida")
+            for item in prices.get("productsResponse", []):
+                for entry in item.get("products", []):
+                    offer = entry.get("offer") or {}
+                    code = offer.get("key")
+                    methods = offer.get("paymentMethods") or []
+                    if code in offers and methods:
+                        amount = methods[0].get("amount") or {}
+                        price = _format_price(amount.get("value"), amount.get("currency"))
+                        for product in offers[code]:
+                            product["price"] = price
+        except (requests.RequestException, ValueError, KeyError, TypeError, AttributeError) as exc:
+            logger.warning("No se obtuvieron precios de Hotmart: %s", type(exc).__name__)
 
-    return course_titles
+    return products

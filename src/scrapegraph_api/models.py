@@ -1,3 +1,5 @@
+from typing import Any, Literal
+
 from pydantic import BaseModel, Field
 
 # --- Schema interno usado para forzar salida estructurada del LLM ---
@@ -42,3 +44,66 @@ class RecursosRequest(BaseModel):
 class RecursosResponse(BaseModel):
     topic: str
     courseTitles: list[CourseTitle]
+
+
+class MultiSourceRequest(BaseModel):
+    topic: str = Field(..., min_length=1, max_length=200)
+    platforms: list[str] = Field(..., min_length=1, max_length=40)
+    max_items: int = Field(5, ge=1, le=5, description="Limite por plataforma")
+
+
+class CourseOffer(BaseModel):
+    source: str
+    title: str
+    description: str
+    price: str
+    url: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class SourceStatus(BaseModel):
+    source: str
+    status: Literal["ok", "empty", "error", "blocked"]
+    count: int
+    detail: str | None = None
+
+
+class MultiSourceResponse(BaseModel):
+    topic: str
+    courses: list[CourseOffer]
+    sources: list[SourceStatus]
+
+
+class ReviewCourseRequest(BaseModel):
+    source: str = Field(min_length=1, max_length=50)
+    url: str = Field(min_length=1, max_length=2000)
+
+
+class ReviewsRequest(BaseModel):
+    courses: list[ReviewCourseRequest] = Field(min_length=1, max_length=12)
+
+
+class PublicReview(BaseModel):
+    id: str
+    text: str
+    url: str
+    source: str
+    date: str | None = None
+    rating: float | None = None
+
+
+class CourseReviews(BaseModel):
+    source: str
+    url: str
+    status: Literal["available", "empty", "not_exposed", "error", "blocked"]
+    reviews: list[PublicReview] = Field(default_factory=list)
+
+
+class ReviewsResponse(BaseModel):
+    courses: list[CourseReviews]
+
+
+class MarketSignalsRequest(BaseModel):
+    topic: str = Field(min_length=1, max_length=200)
+    region: str = Field("PE", pattern=r"^[A-Z]{2}$")
+    focus: str | None = Field(None, max_length=120)
