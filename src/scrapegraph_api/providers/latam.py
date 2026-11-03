@@ -412,41 +412,54 @@ def senpai(topic: str, max_items: int) -> list[dict[str, str]]:
 def digitalhouse(topic: str, max_items: int) -> list[dict[str, str]]:
     if max_items <= 0 or not _clean(topic):
         return []
-    page = "https://www.digitalhouse.com/explorar"
-    soup = _fetch(page, "digitalhouse.com")
-    cert_links = [
-        (urljoin(page, link.get("href")), _clean(link.get_text(" ", strip=True))) for link in soup.select("a[href]")
-        if _path_matches(urljoin(page, link.get("href")), "digitalhouse.com", r"/explorar/certificacion/[^/]+")
-    ]
-    if not cert_links:
-        raise ProviderError("Digital House cambió los enlaces públicos de certificaciones")
+    sitemap = "https://www.digitalhouse.com/sitemap.xml"
+    soup = _fetch(sitemap, "digitalhouse.com")
+    candidates = list(
+        dict.fromkeys(
+            _clean(loc.get_text(strip=True))
+            for loc in soup.select("loc")
+            if _path_matches(_clean(loc.get_text(strip=True)), "digitalhouse.com", r"/productos/.+")
+        )
+    )
+    if not candidates:
+        raise ProviderError("El sitemap público de Digital House ya no enumera productos")
+
     results: list[dict[str, str]] = []
-    seen: set[str] = set()
     deadline = time.monotonic() + 25
-    # La página inicial muestra diez certificaciones; se leen hasta cuatro,
-    # dando prioridad a las afines para mantener acotado el tiempo de consulta.
-    ordered = sorted(dict(cert_links).items(), key=lambda pair: not _relevant(topic, pair[1], _slug_title(pair[0])))
-    for cert_url, _ in ordered[:4]:
+    terms = [word for word in re.findall(r"[a-z0-9]+", _normalized(topic)) if word not in _STOPWORDS]
+    ordered = sorted(
+        candidates,
+        key=lambda url: -sum(term in _normalized(urlparse(url).path) for term in terms),
+    )
+    # El sitemap puede ser largo; solo se consultan las páginas más afines.
+    for url in ordered[:_MAX_DETAIL_REQUESTS]:
         if time.monotonic() >= deadline:
             break
-        cert_soup = _fetch(cert_url, "digitalhouse.com")
-        for link in cert_soup.select("a[href]"):
-            url = urljoin(cert_url, link.get("href"))
-            if not _path_matches(url, "digitalhouse.com", r"/explorar/curso/[^/]+") or url in seen:
-                continue
-            seen.add(url)
-            title, description, _ = _card_fields(link, url)
-            if not _relevant(topic, title, description, _slug_title(url)):
-                continue
-            if time.monotonic() >= deadline:
-                return results
-            title = re.sub(r"\s+\d+\s+m[oó]dulos.*$", "", title, flags=re.I)
-            description = _detail_description(url, "digitalhouse.com")
-            if not _relevant(topic, title, description):
-                continue
-            results.append({"title": title, "description": description, "price": _MISSING_PRICE, "url": url})
-            if len(results) >= min(max_items, _MAX_DETAIL_REQUESTS):
-                return results
+        detail_soup = _fetch(url, "digitalhouse.com")
+        title_meta = detail_soup.select_one('meta[property="og:title"], meta[name="twitter:title"]')
+        title = _clean(title_meta.get("content")) if title_meta else ""
+        if not title and detail_soup.title:
+            title = _clean(detail_soup.title.get_text(" ", strip=True))
+        if not title:
+            heading = detail_soup.select_one("h1")
+            title = _clean(heading.get_text(" ", strip=True)) if heading else ""
+        title = re.sub(r"\s*[|–-]\s*Digital House\s*$", "", title, flags=re.I)
+
+        description_meta = detail_soup.select_one('meta[name="description"], meta[property="og:description"]')
+        description = _clean(description_meta.get("content")) if description_meta else ""
+        description = re.sub(r"\s*[|–-]\s*Digital House\s*$", "", description, flags=re.I)
+        if not description:
+            main = detail_soup.select_one("main") or detail_soup
+            description = next(
+                (_clean(p.get_text(" ", strip=True))[:650] for p in main.select("p") if len(_clean(p.get_text(" ", strip=True))) >= 35),
+                "",
+            )
+        title = title or _slug_title(url)
+        if not _relevant(topic, title, description, _slug_title(url)):
+            continue
+        results.append({"title": title, "description": description, "price": _MISSING_PRICE, "url": url})
+        if len(results) >= min(max_items, _MAX_DETAIL_REQUESTS):
+            break
     return results
 
 

@@ -2,7 +2,7 @@
 
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from threading import Lock
+from threading import BoundedSemaphore, Lock
 from time import monotonic
 from urllib.parse import urlparse
 
@@ -38,6 +38,13 @@ OFFICIAL_DOMAINS = {
 _PAUSED_UNTIL: dict[str, float] = {}
 _PAUSE_LOCK = Lock()
 _BLOCK_PAUSE_SECONDS = 15 * 60
+_MAX_ACTIVE_SOURCE_TASKS = 12
+_SOURCE_EXECUTOR = ThreadPoolExecutor(
+    max_workers=_MAX_ACTIVE_SOURCE_TASKS,
+    thread_name_prefix="course-source",
+)
+_SOURCE_CAPACITY = BoundedSemaphore(_MAX_ACTIVE_SOURCE_TASKS)
+_SOURCE_ADMISSION_LOCK = Lock()
 
 
 def available_adapters():
@@ -136,63 +143,101 @@ def search_catalogs(topic: str, platforms: list[str], max_items: int) -> MultiSo
         return MultiSourceResponse(
             topic=topic, courses=[], sources=[outcomes[source][1] for source in requested]
         )
-    with ThreadPoolExecutor(max_workers=min(4, len(runnable))) as pool:
-        pending = {
-            pool.submit(_query_source, source, adapters[source], topic, max_items): source
-            for source in runnable
-        }
-        for future in as_completed(pending):
-            source = pending[future]
-            try:
-                courses = future.result()
-                outcomes[source] = (
-                    courses,
-                    SourceStatus(
-                        source=source,
-                        status="ok" if courses else "empty",
-                        count=len(courses),
-                    ),
-                )
-            except HTTPException as exc:
-                blocked = exc.status_code in (401, 403, 429)
-                if blocked:
-                    _pause(source)
-                outcomes[source] = (
-                    [],
-                    SourceStatus(
-                        source=source,
-                        status="blocked" if blocked else "error",
-                        count=0,
-                        detail=f"HTTP {exc.status_code}",
-                    ),
-                )
-            except requests.HTTPError as exc:
-                code = exc.response.status_code if exc.response is not None else None
-                blocked = code in (401, 403, 429)
-                if blocked:
-                    _pause(source)
-                outcomes[source] = (
-                    [],
-                    SourceStatus(
-                        source=source,
-                        status="blocked" if blocked else "error",
-                        count=0,
-                        detail=f"HTTP {code}" if code else "Error HTTP",
-                    ),
-                )
-            except Exception as exc:
-                blocked = isinstance(exc, SourceBlockedError)
-                if blocked:
-                    _pause(source)
-                outcomes[source] = (
-                    [],
-                    SourceStatus(
-                        source=source,
-                        status="blocked" if blocked else "error",
-                        count=0,
-                        detail=type(exc).__name__,
-                    ),
-                )
+    # Fallar rápido evita que búsquedas antiguas se acumulen en la cola interna.
+    reserved = 0
+    with _SOURCE_ADMISSION_LOCK:
+        if len(runnable) <= _MAX_ACTIVE_SOURCE_TASKS:
+            for _ in runnable:
+                if not _SOURCE_CAPACITY.acquire(blocking=False):
+                    break
+                reserved += 1
+        if reserved != len(runnable):
+            for _ in range(reserved):
+                _SOURCE_CAPACITY.release()
+            reserved = 0
+
+    if reserved != len(runnable):
+        for source in runnable:
+            outcomes[source] = (
+                [],
+                SourceStatus(
+                    source=source,
+                    status="error",
+                    count=0,
+                    detail="Scraper ocupado; no se encoló. Intenta de nuevo en unos segundos.",
+                ),
+            )
+        return MultiSourceResponse(
+            topic=topic, courses=[], sources=[outcomes[source][1] for source in requested]
+        )
+
+    pending = {}
+    try:
+        for source in runnable:
+            future = _SOURCE_EXECUTOR.submit(
+                _query_source, source, adapters[source], topic, max_items
+            )
+            future.add_done_callback(lambda _: _SOURCE_CAPACITY.release())
+            pending[future] = source
+    except Exception:
+        for _ in range(reserved - len(pending)):
+            _SOURCE_CAPACITY.release()
+        for future in pending:
+            future.cancel()
+        raise
+
+    for future in as_completed(pending):
+        source = pending[future]
+        try:
+            courses = future.result()
+            outcomes[source] = (
+                courses,
+                SourceStatus(
+                    source=source,
+                    status="ok" if courses else "empty",
+                    count=len(courses),
+                ),
+            )
+        except HTTPException as exc:
+            blocked = exc.status_code in (401, 403, 429)
+            if blocked:
+                _pause(source)
+            outcomes[source] = (
+                [],
+                SourceStatus(
+                    source=source,
+                    status="blocked" if blocked else "error",
+                    count=0,
+                    detail=f"HTTP {exc.status_code}",
+                ),
+            )
+        except requests.HTTPError as exc:
+            code = exc.response.status_code if exc.response is not None else None
+            blocked = code in (401, 403, 429)
+            if blocked:
+                _pause(source)
+            outcomes[source] = (
+                [],
+                SourceStatus(
+                    source=source,
+                    status="blocked" if blocked else "error",
+                    count=0,
+                    detail=f"HTTP {code}" if code else "Error HTTP",
+                ),
+            )
+        except Exception as exc:
+            blocked = isinstance(exc, SourceBlockedError)
+            if blocked:
+                _pause(source)
+            outcomes[source] = (
+                [],
+                SourceStatus(
+                    source=source,
+                    status="blocked" if blocked else "error",
+                    count=0,
+                    detail=type(exc).__name__,
+                ),
+            )
 
     return MultiSourceResponse(
         topic=topic,

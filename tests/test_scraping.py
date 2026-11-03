@@ -8,7 +8,7 @@ from fastapi import HTTPException
 
 from scrapegraph_api import api, multisource, scraping
 from scrapegraph_api.models import MultiSourceRequest
-from scrapegraph_api.providers import tech
+from scrapegraph_api.providers import latam, tech
 
 
 class HotmartTests(unittest.TestCase):
@@ -110,6 +110,45 @@ class MultiSourceTests(unittest.TestCase):
             result = multisource.search_catalogs("Python", ["dataquest"], 1)
         self.assertEqual(result.sources[0].status, "error")
         self.assertEqual(result.courses, [])
+
+
+class DigitalHouseTests(unittest.TestCase):
+    def test_reads_relevant_products_from_the_public_sitemap(self):
+        sitemap = latam.BeautifulSoup(
+            """
+            <urlset>
+              <url><loc>https://www.digitalhouse.com/productos/programacion/react-developer</loc></url>
+              <url><loc>https://www.digitalhouse.com/productos/programacion/python</loc></url>
+              <url><loc>https://attacker.example/productos/programacion/react-developer</loc></url>
+            </urlset>
+            """,
+            "html.parser",
+        )
+        product = latam.BeautifulSoup(
+            """
+            <html><head>
+              <title>Certificación React Developer | Digital House</title>
+              <meta property="og:title" content="Certificación React Developer | Digital House">
+              <meta name="description" content="Especialízate en React con esta certificación. | Digital House">
+            </head><body><h1>¿Qué vas a aprender?</h1></body></html>
+            """,
+            "html.parser",
+        )
+        with patch.object(latam, "_fetch", side_effect=[sitemap, product]) as fetch:
+            rows = latam.digitalhouse("React Developer", max_items=1)
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["title"], "Certificación React Developer")
+        self.assertIn("Especialízate en React", rows[0]["description"])
+        self.assertEqual(
+            rows[0]["url"],
+            "https://www.digitalhouse.com/productos/programacion/react-developer",
+        )
+        self.assertEqual(fetch.call_count, 2)
+        self.assertEqual(
+            fetch.call_args_list[0].args,
+            ("https://www.digitalhouse.com/sitemap.xml", "digitalhouse.com"),
+        )
 
     def test_catalog_error_containing_rejection_word_is_not_a_block(self):
         def changed_schema(topic, max_items):

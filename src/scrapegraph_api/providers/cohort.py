@@ -192,7 +192,8 @@ def _search(source: str, topic: str, max_items: int) -> list[dict[str, str]]:
         links.items(),
         key=lambda item: not _relevant(topic, item[1], urlparse(item[0]).path),
     )
-    for url, _ in ordered_links[: min(max_items * 2, 4)]:
+    page_limit = min(max_items if source == "four_geeks" else max_items * 2, 4)
+    for url, _ in ordered_links[:page_limit]:
         try:
             title, description, price = _details(url)
         except CatalogBlocked:
